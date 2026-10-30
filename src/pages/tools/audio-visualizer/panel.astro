@@ -1,0 +1,254 @@
+---
+import Base from '../../../layouts/Base.astro';
+const base = import.meta.env.BASE_URL;
+---
+
+<Base title="オーディオビジュアライザー（操作パネル）" bare>
+  <div id="app" data-display={`${base}tools/audio-visualizer/display/`} style="background:#fff;min-height:100vh;padding:12px;font-size:14px">
+    <style>
+      #app h2 { margin: 14px 0 8px; font-size: 13px; color: #6b7280; }
+      #app h2:first-child { margin-top: 0; }
+      #app .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+      #app label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #6b7280; }
+      #app input[type='text'], #app input[type='password'], #app input[type='number'], #app select {
+        padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 14px; background: #fff;
+      }
+      #app input[type='range'] { width: 100%; }
+      #app .slider { display: grid; grid-template-columns: 90px 1fr 44px; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13px; }
+      #app .slider output { text-align: right; color: #6b7280; font-variant-numeric: tabular-nums; }
+      #status { font-size: 12px; margin: 0 0 4px; }
+      #status.ok { color: #15803d; }
+      #status.err { color: #b91c1c; }
+      #meter { position: relative; height: 10px; background: #eef0f3; border-radius: 5px; overflow: hidden; margin: 6px 0 10px; }
+      #meterFill { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, #4dabf7, #ff6b9d); }
+      #preview { width: 100%; height: 96px; display: block; background: #2b2f36; border-radius: 8px; }
+      details { margin-top: 14px; font-size: 12px; color: #6b7280; }
+      details p { margin: 6px 0; }
+    </style>
+
+    <h2>1. OBSに接続</h2>
+    <div class="row">
+      <label>ホスト<input type="text" id="host" value="localhost" style="width:110px" /></label>
+      <label>ポート<input type="number" id="port" value="4455" style="width:72px" /></label>
+    </div>
+    <div class="row">
+      <label style="flex:1">パスワード<input type="password" id="pw" autocomplete="off" style="width:100%" /></label>
+      <button class="btn" id="connect" type="button" style="align-self:end">接続</button>
+    </div>
+    <p id="status">未接続</p>
+
+    <h2>2. 音声ソースを選ぶ</h2>
+    <select id="source" style="width:100%">
+      <option value="">（選んでください）</option>
+    </select>
+    <div id="meter" title="現在の音量。縦線がしきい値"><div id="meterFill"></div></div>
+    <canvas id="preview"></canvas>
+    <p style="font-size:12px;color:#6b7280;margin:6px 0 0" id="previewNote"></p>
+
+    <h2>3. 見た目を整える</h2>
+    <div class="row">
+      <label>形
+        <select id="shape">
+          <option value="drops">しずく</option>
+          <option value="dots">まる</option>
+          <option value="bars">バー</option>
+          <option value="wave">なみ</option>
+        </select>
+      </label>
+      <label>音が弱い色<input type="color" id="colorLow" value="#4dabf7" /></label>
+      <label>音が強い色<input type="color" id="colorHigh" value="#ff6b9d" /></label>
+    </div>
+    <div class="slider"><span>しきい値</span><input type="range" id="threshold" min="-80" max="-10" step="1" /><output id="thresholdOut"></output></div>
+    <div class="slider"><span>数</span><input type="range" id="count" min="8" max="64" step="1" /><output id="countOut"></output></div>
+    <div class="slider"><span>反応の大きさ</span><input type="range" id="gain" min="0.5" max="3" step="0.1" /><output id="gainOut"></output></div>
+
+    <details>
+      <summary>配信表示と連携しないとき</summary>
+      <p>
+        通常は、この操作パネルの接続情報・設定が配信表示に自動で伝わります。
+        うまく伝わらない場合だけ、下のボタンで接続情報（パスワードを含む）つきのURLをコピーし、
+        ブラウザソースのURLを置き換えてください。このURLは他人に見せないでください。
+      </p>
+      <button class="btn secondary" id="copyFull" type="button">接続情報つきの表示URLをコピー</button>
+    </details>
+  </div>
+</Base>
+
+<script>
+  import { ObsClient } from '../../../scripts/obs';
+  import type { ObsConn } from '../../../scripts/obs';
+  import {
+    CUSTOM_EVENT_TYPE,
+    LineRenderer,
+    demoLevel,
+    levelToNorm,
+    loadConn,
+    loadSettings,
+    saveConn,
+    saveSettings,
+    sanitize,
+    toHash,
+  } from '../../../scripts/line';
+  import type { LineSettings } from '../../../scripts/line';
+
+  const $ = <T extends HTMLElement = HTMLInputElement>(id: string) => document.getElementById(id) as T;
+  const app = $('app');
+  const displayPath = app.dataset.display!;
+
+  let settings: LineSettings = loadSettings();
+  const storedConn = loadConn();
+  if (storedConn) {
+    $('host').value = storedConn.host;
+    $('port').value = String(storedConn.port);
+    $('pw').value = storedConn.password;
+  }
+
+  // ---- 接続 ----
+  const statusEl = $('status', );
+  let conn: ObsConn | null = storedConn;
+  const client = new ObsClient(() => conn);
+  let levels: Record<string, number> = {};
+  const seen = new Set<string>();
+
+  function setStatus(text: string, kind: '' | 'ok' | 'err' = '') {
+    statusEl.textContent = text;
+    statusEl.className = kind;
+  }
+
+  function readConn(): ObsConn {
+    return {
+      host: $('host').value.trim() || 'localhost',
+      port: Number($('port').value) || 4455,
+      password: $('pw').value,
+    };
+  }
+
+  function pushSettings() {
+    saveSettings(settings);
+    client.broadcast({ type: CUSTOM_EVENT_TYPE, settings });
+  }
+
+  client.onState = (s, msg) => {
+    if (s === 'connected') {
+      setStatus('接続しました。音声ソースを選んでください。', 'ok');
+      $('connect').textContent = '切断';
+      pushSettings(); // 配信表示に今の設定を送る
+    } else if (s === 'connecting') {
+      setStatus('接続中…');
+    } else if (s === 'error') {
+      setStatus(msg ?? '接続できません', 'err');
+      $('connect').textContent = '接続';
+    } else {
+      setStatus('未接続');
+      $('connect').textContent = '接続';
+    }
+  };
+
+  client.onMeters = (m) => {
+    levels = m;
+    let changed = false;
+    for (const name of Object.keys(m)) {
+      if (!seen.has(name)) {
+        seen.add(name);
+        changed = true;
+      }
+    }
+    if (changed) refreshSources();
+  };
+
+  $('connect').addEventListener('click', () => {
+    if (client.connected) {
+      client.disconnect();
+      return;
+    }
+    conn = readConn();
+    saveConn(conn);
+    client.connect();
+  });
+
+  if (storedConn) client.connect();
+
+  // ---- 音声ソース ----
+  const sourceEl = $<HTMLSelectElement>('source');
+  function refreshSources() {
+    const names = new Set(seen);
+    if (settings.source) names.add(settings.source);
+    sourceEl.innerHTML = '<option value="">（選んでください）</option>';
+    for (const name of [...names].sort()) {
+      const o = document.createElement('option');
+      o.value = name;
+      o.textContent = name;
+      sourceEl.appendChild(o);
+    }
+    sourceEl.value = settings.source;
+  }
+  refreshSources();
+
+  // ---- 設定フォーム ----
+  function writeForm() {
+    $('shape').value = settings.shape;
+    $('colorLow').value = settings.colorLow;
+    $('colorHigh').value = settings.colorHigh;
+    $('threshold').value = String(settings.threshold);
+    $('count').value = String(settings.count);
+    $('gain').value = String(settings.gain);
+    $('thresholdOut').textContent = `${settings.threshold}dB`;
+    $('countOut').textContent = String(settings.count);
+    $('gainOut').textContent = `×${settings.gain.toFixed(1)}`;
+  }
+
+  function readForm() {
+    settings = sanitize({
+      source: sourceEl.value,
+      shape: $('shape').value,
+      colorLow: $('colorLow').value,
+      colorHigh: $('colorHigh').value,
+      threshold: $('threshold').value,
+      count: $('count').value,
+      gain: $('gain').value,
+    });
+    writeForm();
+    pushSettings();
+  }
+
+  ['shape', 'colorLow', 'colorHigh', 'threshold', 'count', 'gain'].forEach((id) =>
+    $(id).addEventListener('input', readForm),
+  );
+  sourceEl.addEventListener('change', readForm);
+  writeForm();
+
+  // ---- メーターとプレビュー ----
+  const renderer = new LineRenderer($<HTMLCanvasElement>('preview'));
+  const meterFill = $('meterFill');
+  const note = $('previewNote');
+
+  function frame(now: number) {
+    let target: number;
+    if (client.connected && settings.source) {
+      const mul = levels[settings.source] ?? 0;
+      target = levelToNorm(mul, settings.threshold);
+      note.textContent = '声を出してラインが動くか確かめてください。';
+    } else {
+      target = demoLevel(now / 1000);
+      note.textContent = 'いまはサンプルの動きです（接続して音声ソースを選ぶと実際の音になります）。';
+    }
+    target = Math.min(1, target * settings.gain);
+    meterFill.style.width = `${Math.round(target * 100)}%`;
+    renderer.frame(now, target, settings);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ---- うまく連携しないとき用 ----
+  $('copyFull').addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    const url = `${location.origin}${displayPath}${toHash(readConn(), settings)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      btn.textContent = 'コピーしました';
+    } catch {
+      btn.textContent = 'コピーできませんでした';
+    }
+    setTimeout(() => (btn.textContent = '接続情報つきの表示URLをコピー'), 1800);
+  });
+</script>

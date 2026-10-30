@@ -1,0 +1,108 @@
+---
+import Base from '../../../layouts/Base.astro';
+const base = import.meta.env.BASE_URL;
+const displayPath = `${base}tools/audio-visualizer/display/`;
+const panelPath = `${base}tools/audio-visualizer/panel/`;
+---
+
+<Base title="オーディオビジュアライザー" description="OBSの音声ソースの音量に合わせて動くライン。URLを貼るだけで使えます。">
+  <div class="container tool-page" data-display={displayPath} data-panel={panelPath}>
+    <div class="breadcrumb"><a href={base}>ツール一覧</a> / 画面演出</div>
+    <h1>🎚️ オーディオビジュアライザー</h1>
+    <p class="lead">
+      OBSの音声ソース（マイクなど）の音量に合わせて、ラインに並んだしずくが動き、色が変わります。
+      OBSにURLを貼るだけで使えます。
+    </p>
+
+    <section class="panel">
+      <h2>使い方</h2>
+      <ol style="margin:0;padding-left:20px;line-height:2">
+        <li>
+          OBSの「ツール」→「WebSocketサーバー設定」で
+          <strong>「WebSocketサーバーを有効にする」</strong>をオンにします（認証はオンのまま。ポートはふつう 4455）。
+        </li>
+        <li>
+          下の「設定画面をひらく」に出る<strong>「配信表示」のURL</strong>を、OBSの
+          <strong>ブラウザソース</strong>に貼ります（幅 1920・高さ 1080）。
+        </li>
+        <li>
+          <strong>「操作パネル」のURL</strong>を、OBSの「ドック」→「カスタムブラウザドック」に入れ、
+          OBS WebSocketのパスワードを入力して「接続」を押します（配信や録画に映っていないときに）。
+        </li>
+        <li>
+          操作パネルで音声ソースを選び、声を出してラインが動くことを確かめてから、色・しきい値・形を整えます。
+        </li>
+      </ol>
+    </section>
+
+    <p><button class="btn" id="open" type="button">設定画面をひらく</button></p>
+
+    <div id="urls" hidden>
+      <section class="panel">
+        <h2>配信表示のURL（ブラウザソース用）</h2>
+        <div class="url-box">
+          <input type="text" id="displayUrl" readonly />
+          <button class="btn" data-copy="displayUrl" type="button">URLをコピー</button>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin:10px 0 0">背景は透明です。幅1920・高さ1080で追加してください。</p>
+      </section>
+
+      <section class="panel">
+        <h2>操作パネルのURL（カスタムブラウザドック用）</h2>
+        <div class="url-box">
+          <input type="text" id="panelUrl" readonly />
+          <button class="btn" data-copy="panelUrl" type="button">URLをコピー</button>
+        </div>
+        <p style="font-size:13px;color:var(--muted);margin:10px 0 0">
+          OBSの「ドック」→「カスタムブラウザドック」で、ドック名を付けてこのURLを入れます。
+          <a id="panelLink" href={panelPath} target="_blank" rel="noopener">ふつうのブラウザで開いて試す</a>こともできます。
+        </p>
+      </section>
+
+      <section class="panel">
+        <h2>見た目のサンプル</h2>
+        <div class="preview" style="padding:0;background-color:#222;background-image:none">
+          <iframe id="frame" title="サンプル" style="border:0;width:100%;height:240px"></iframe>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <h2>うまく動かないとき</h2>
+      <ul style="margin:0;padding-left:20px;line-height:1.9;font-size:14px">
+        <li>操作パネルに「認証に失敗しました」と出る → OBSのWebSocketサーバー設定で、パスワードを確認してください。</li>
+        <li>「OBSに接続できません」と出る → WebSocketサーバーが有効か、ポート番号が合っているかを確認してください。</li>
+        <li>音声ソースの候補が出ない → そのソースから音が出ている（ミュートされていない）状態で、少し声を出してみてください。</li>
+        <li>配信表示に設定が伝わらない → 操作パネル下部の「配信表示と連携しないとき」から、接続情報つきURLを使えます。</li>
+      </ul>
+    </section>
+  </div>
+</Base>
+
+<script>
+  const root = document.querySelector<HTMLElement>('[data-display]')!;
+  const el = (id: string) => document.getElementById(id) as HTMLInputElement;
+
+  function show() {
+    el('displayUrl').value = location.origin + root.dataset.display!;
+    el('panelUrl').value = location.origin + root.dataset.panel!;
+    (document.getElementById('frame') as HTMLIFrameElement).src = `${root.dataset.display}?demo=1`;
+    document.getElementById('urls')!.hidden = false;
+    document.getElementById('open')!.hidden = true;
+  }
+  document.getElementById('open')!.addEventListener('click', show);
+
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const input = el(btn.dataset.copy!);
+      try {
+        await navigator.clipboard.writeText(input.value);
+        btn.textContent = 'コピーしました！';
+      } catch {
+        input.select();
+        btn.textContent = '選択しました（Ctrl+Cでコピー）';
+      }
+      setTimeout(() => (btn.textContent = 'URLをコピー'), 1800);
+    });
+  });
+</script>

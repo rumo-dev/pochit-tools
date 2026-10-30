@@ -1,0 +1,89 @@
+---
+import Base from '../layouts/Base.astro';
+import ToolCard from '../components/ToolCard.astro';
+import { CATEGORIES, TOOLS } from '../data/site';
+
+const counts = Object.fromEntries(
+  CATEGORIES.map((c) => [c, TOOLS.filter((t) => t.category === c).length]),
+);
+---
+
+<Base>
+  <div class="container">
+    <div class="search-bar">
+      <input type="search" id="q" placeholder="ツールを検索（例：タイマー、出席、時計）" aria-label="ツールを検索" />
+    </div>
+
+    <div class="notice">公開準備中のサンプルサイトです。ツールは順次追加されます。</div>
+
+    <div class="layout">
+      <aside class="filters">
+        <h2>絞り込み</h2>
+        <h3>カテゴリ</h3>
+        <ul class="cat-list" id="cats">
+          <li>
+            <button type="button" data-cat="" aria-pressed="true">
+              <span>すべて</span><span class="count">{TOOLS.length}</span>
+            </button>
+          </li>
+          {
+            CATEGORIES.map((c) => (
+              <li>
+                <button type="button" data-cat={c} aria-pressed="false">
+                  <span>{c}</span>
+                  <span class="count">{counts[c]}</span>
+                </button>
+              </li>
+            ))
+          }
+        </ul>
+      </aside>
+
+      <main>
+        <div class="results-head">
+          <h1>すべてのツール</h1>
+          <span class="meta" id="meta">{TOOLS.length} 件</span>
+        </div>
+        <div class="grid" id="grid">
+          {TOOLS.map((tool) => <ToolCard tool={tool} />)}
+        </div>
+        <p class="empty" id="empty" hidden>条件に合うツールが見つかりませんでした。</p>
+      </main>
+    </div>
+  </div>
+</Base>
+
+<script>
+  const q = document.getElementById('q') as HTMLInputElement;
+  const cats = document.getElementById('cats') as HTMLElement;
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-card]'));
+  const meta = document.getElementById('meta')!;
+  const empty = document.getElementById('empty')!;
+  const heading = document.querySelector('.results-head h1')!;
+
+  let category = '';
+
+  function apply() {
+    const text = q.value.trim().toLowerCase();
+    let shown = 0;
+    for (const card of cards) {
+      const okCat = !category || card.dataset.category === category;
+      const okText = !text || (card.dataset.search ?? '').includes(text);
+      const visible = okCat && okText;
+      card.hidden = !visible;
+      if (visible) shown++;
+    }
+    meta.textContent = `${shown} 件`;
+    empty.hidden = shown > 0;
+    heading.textContent = category || 'すべてのツール';
+  }
+
+  q.addEventListener('input', apply);
+  cats.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-cat]');
+    if (!btn) return;
+    category = btn.dataset.cat ?? '';
+    cats.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    apply();
+  });
+</script>
